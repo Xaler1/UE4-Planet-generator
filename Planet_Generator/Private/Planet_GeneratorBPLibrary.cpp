@@ -7,30 +7,31 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "time.h"
 
-int p[512];
+float coefs[11];
 
 UPlanet_GeneratorBPLibrary::UPlanet_GeneratorBPLibrary(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer)
 {
 	srand(time(NULL));
-	for (int i = 0; i < 512; i++) {
-		p[i] = rand() % 256 + 1;
+	for (int i = 0; i < 11; i++) {
+		coefs[i] = rand() * 1000;
 	}
 }
 
-FVector rThetaPhi_to_XYZ(float R, float Theta, float Phi);
-FVector translateToSphere(FVector original, float radius);
-FVector applyLandscape(FVector original, float radius, float wavelength, float amplitude, float offset, float Mountains, float Oceans);
-float landscape(float X);
-float mountains(float X);
-float sea(float X);
-float smooth(float X, float point, float rate);
+FVector RThetaPhi_to_XYZ(float R, float Theta, float Phi);
+FVector TranslateToSphere(FVector original, float radius);
+FVector ApplyLandscape(FVector original, float radius, float wavelength, float amplitude, float offset, float Mountains, float Oceans);
+float Landscape(float X);
+float Mountains(float X);
+float Sea(float X);
+float Smooth(float X, float point, float rate);
 float ThreeD_Perlin_Noise(float X, float Y, float Z, float wavelength, float amplitude);
 float Interpolate(float a, float b, float x);
 float Fade(float t);
-float Gradient(int hash, float X, float Y, float Z);
+float dotGradient(int X, float x, int Y = 0, float y = 0, int Z = 0, float z = 0, int W = 0, float w = 0);
+FVector4 Random(int X, int Y, int Z, int W);
 
-void UPlanet_GeneratorBPLibrary::GeneratePlanet(const float radius, const int divisions, const float wavelength, const float amplitude, const float offset, const float Oceans, const float Mountains, TArray<FVector>& Verticies, TArray<int32>& Triangles, TArray<FVector>& Normals) {
+void UPlanet_GeneratorBPLibrary::GeneratePlanet(const float radius, const int divisions, const float wavelength, const float amplitude, const float offset, const float oceans, const float mountains, TArray<FVector>& Verticies, TArray<int32>& Triangles, TArray<FVector>& Normals) {
 	int side_divisions = floor(divisions / 2);
 	float step_size = sqrt((radius*radius) / 3) * 2 / (side_divisions - 1);
 	FVector corners[6];
@@ -57,7 +58,7 @@ void UPlanet_GeneratorBPLibrary::GeneratePlanet(const float radius, const int di
 	for (int i = 0; i < 6; i++) {
 		for (int x = 0; x < side_divisions; x++) {
 			for (int y = 0; y < side_divisions; y++) {
-				Verticies.Add(applyLandscape(translateToSphere(corners[i] + first_add_vectors[i] * y * step_size + second_add_vectors[i] * x * step_size, radius), radius, wavelength, amplitude, offset, Mountains, Oceans));
+				Verticies.Add(ApplyLandscape(TranslateToSphere(corners[i] + first_add_vectors[i] * y * step_size + second_add_vectors[i] * x * step_size, radius), radius, wavelength, amplitude, offset, mountains, oceans));
 				if (x < side_divisions - 1 && y < side_divisions - 1) {
 					Triangles.Add(i * side_divisions * side_divisions + x * side_divisions + y);
 					Triangles.Add(i * side_divisions * side_divisions + (x + 1) * side_divisions + y + 1);
@@ -78,65 +79,55 @@ void UPlanet_GeneratorBPLibrary::GeneratePlanet(const float radius, const int di
 	}
 }
 
-FVector rThetaPhi_to_XYZ(float R, float Theta, float Phi) {
-	return FVector(R * sin(Theta) * cos(Phi), R * sin(Theta) * sin(Phi), R * cos(Theta));
-}
-
-FVector translateToSphere(FVector original, float radius) {
+FVector TranslateToSphere(FVector original, float radius) {
 	return original / ((original.Size()) / radius);
 }
 
-FVector applyLandscape(FVector original, float radius, float wavelength, float amplitude, float offset, float Mountains, float Oceans) {
+FVector ApplyLandscape(FVector original, float radius, float wavelength, float amplitude, float offset, float mountains, float oceans) {
 	float noise_large = ThreeD_Perlin_Noise(original.X + offset + radius, original.Y + offset + radius, original.Z + offset + radius, wavelength, amplitude);
 	float noise_small = ThreeD_Perlin_Noise(original.X + offset + radius, original.Y + offset + radius, original.Z + offset + radius, wavelength / 2.0, amplitude / 3.0);
-	float noise = powf(UKismetMathLibrary::FClamp(noise_large, 0.0, 1.0), Mountains) - powf(abs(UKismetMathLibrary::FClamp(noise_large, -1.0, 0.0)), Oceans);
-	return original * (1 + (landscape(noise) + noise_small)/(radius/10));
+	float noise = powf(UKismetMathLibrary::FClamp(noise_large, 0.0, 1.0), mountains) - powf(abs(UKismetMathLibrary::FClamp(noise_large, -1.0, 0.0)), oceans);
+	return original * (1 + (Landscape(noise) + noise_small)/(radius/10));
 }
 
-float landscape(float X) {
-	float h1 = smooth(X, 0, 0.1);
-	float h2 = smooth(X, -0.4, 0.2);
-	return -0.8 * (1 - h2) + sea(X) * h2 * (1 - h1) + mountains(X) * h1;
+float Landscape(float X) {
+	float h1 = Smooth(X, 0, 0.1);
+	float h2 = Smooth(X, -0.4, 0.2);
+	return -0.8 * (1 - h2) + Sea(X) * h2 * (1 - h1) + Mountains(X) * h1;
 }
 
-float mountains(float X) {
+float Mountains(float X) {
 	return exp(3.2 * X - 5) + X / 2;
 }
 
-float sea(float X) {
+float Sea(float X) {
 	return pow((X + 1), 2) - 1;
 }
 
-float smooth(float X, float point, float rate) {
+float Smooth(float X, float point, float rate) {
 	return 0.5 + 0.5 * tanh((X - point) / rate);
 }
 
-float ThreeD_Perlin_Noise(float X, float Y, float Z, float wavelength = 1, float amplitude = 1) {
-	if (wavelength == 0) {
-		wavelength = 1;
-	}
-	X /= wavelength;
-	Y /= wavelength;
-	Z /= wavelength;
-	int a = int(floor(X)) & 0xff;
-	int b = int(floor(Y)) & 0xff;
-	int c = int(floor(Z)) & 0xff;
-	X -= floor(X);
-	Y -= floor(Y);
-	Z -= floor(Z);
-	float u = Fade(X);
-	float v = Fade(Y);
-	float w = Fade(Z);
-	int A = int(p[a] + b) & 0xff;
-	int B = int(p[a + 1] + b) & 0xff;
-	int AA = int(p[A] + c) & 0xff;
-	int BA = int(p[B] + c) & 0xff;
-	int AB = int(p[A + 1] + c) & 0xff;
-	int BB = int(p[B + 1] + c) & 0xff;
-	return Interpolate(Interpolate(Interpolate(Gradient(p[AA], X, Y, Z), Gradient(p[BA], X - 1, Y, Z), u),
-		Interpolate(Gradient(p[AB], X, Y - 1, Z), Gradient(p[BB], X - 1, Y - 1, Z), u), v),
-		Interpolate(Interpolate(Gradient(p[AA + 1], X, Y, Z - 1), Gradient(p[BA + 1], X - 1, Y, Z - 1), u),
-			Interpolate(Gradient(p[AB + 1], X, Y - 1, Z - 1), Gradient(p[BB + 1], X - 1, Y - 1, Z - 1), u), v), w) * amplitude;
+float ThreeD_Perlin_Noise(float x, float y, float z, float scale = 1, float amplitude = 1) {
+	scale = scale <= 0 ? 1 : scale;
+	x /= scale;
+	y /= scale;
+	z /= scale;
+	int xL = floor(x);
+	int xU = xL + 1;
+	int yL = floor(y);
+	int yU = yL + 1;
+	int zL = floor(z);
+	int zU = zL + 1;
+
+	float dx = Fade(x - xL);
+	float dy = Fade(y - yL);
+	float dz = Fade(z - zL);
+
+	return Interpolate(Interpolate(Interpolate(dotGradient(xL, x, yL, y, zL, z), dotGradient(xU, x, yL, y, zL, z), dx),
+		Interpolate(dotGradient(xL, x, yU, y, zL, z), dotGradient(xU, x, yU, y, zL, z), dx), dy),
+		Interpolate(Interpolate(dotGradient(xL, x, yL, y, zU, z), dotGradient(xU, x, yL, y, zU, z), dx),
+			Interpolate(dotGradient(xL, x, yU, y, zU, z), dotGradient(xU, x, yU, y, zU, z), dx), dy), dz) * amplitude;
 }
 
 float Interpolate(float a, float b, float x) {
@@ -145,13 +136,26 @@ float Interpolate(float a, float b, float x) {
 	return a * (1 - f) + b * f;
 }
 
+FVector4 Random(int X, int Y, int Z, int W) {
+	float seed = coefs[0] * sin(coefs[1] * X + coefs[2] * Y + coefs[3] * Z + coefs[4] * W + coefs[5]) * cos(coefs[6] * X + coefs[7] * Y + coefs[8] * Z + coefs[9] * W + coefs[10]);
+	srand(seed);
+	float x = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0)) - 1.0;
+	float y = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0)) - 1.0;
+	float z = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0)) - 1.0;
+	float w = static_cast <float> (rand()) / (static_cast <float> (RAND_MAX / 2.0)) - 1.0;
+	FVector4 random_vector = FVector4(x, y, z, w);
+	return random_vector / random_vector.Size();
+}
+
 float Fade(float t) {
 	return t * t * t * (t * (t * 6 - 15) + 10);
 }
 
-float Gradient(int hash, float X, float Y, float Z) {
-	int h = hash & 15;
-	float u = h < 8 ? X : Y;
-	float v = h < 4 ? Y : (h == 12 || h == 14 ? X : Z);
-	return ((h & 1) == 0 ? u : -u) + ((h & 2) == 0 ? v : -v);
+float dotGradient(int X, float x, int Y, float y, int Z, float z, int W, float w) {
+	FVector4 random_vector = Random(X, Y, Z, W);
+	float dx = x - X;
+	float dy = y - Y;
+	float dz = z - Z;
+	float dw = w - W;
+	return dx * random_vector.X + dy * random_vector.Y + dz * random_vector.Z + dw * random_vector.W;
 }
